@@ -1,0 +1,69 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FB_TCP_IP_ServerClientConnection" Id="{d618cfa8-90c1-493c-96db-d4e8e2e1be0b}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TCP_IP_ServerClientConnection
+VAR_INPUT
+	sSrvNetId: T_AmsNetId;
+	sLocalHost: T_IPv4Addr := '192.168.1.7';
+	nLocalPort: UDINT := 23;
+	
+END_VAR
+VAR_OUTPUT
+	
+END_VAR
+VAR
+	fbServerClientConnection: FB_ServerClientConnection;
+	hServer: T_HSERVER;
+	eMode: E_SocketAcceptMode;
+	sRemoteHost: T_IPv4Addr := '192.168.1.7';
+	nRemotePort: UDINT := 23;
+	bEnable: BOOL;
+	tReconnect: TIME := T#2s;
+	bEnable2: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+	F_CreateServerHnd(
+		sSrvNetID			:= sSrvNetID, 
+		sLocalHost			:= sLocalHost, 
+		nLocalPort			:= nLocalPort, 
+		nMode				:= LISTEN_MODE_CLOSEALL, 
+		bEnable				:= bEnable2, 
+		hServer				:= hServer);
+
+	fbServerClientConnection(
+		hServer				:= hServer, 
+		eMode				:= eMode, 
+		sRemoteHost			:= sRemoteHost, 
+		nRemotePort			:= nRemotePort, 
+		bEnable				:= bEnable, 
+		tReconnect			:= tReconnect, 
+		bBusy				=> , 
+		bError				=> , 
+		nErrID				=> , 
+		hSocket				=> , 
+		eState				=> );
+
+	fbServerClientConnection.bBusy;
+	fbServerClientConnection.bError;
+	fbServerClientConnection.nErrID;
+	fbServerClientConnection.hSocket.handle;
+	fbServerClientConnection.eState;
+	
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="FB_TCP_IP_ServerClientConnection">
+      <LineId Id="27" Count="0" />
+      <LineId Id="29" Count="5" />
+      <LineId Id="28" Count="0" />
+      <LineId Id="10" Count="0" />
+      <LineId Id="15" Count="10" />
+      <LineId Id="11" Count="2" />
+      <LineId Id="46" Count="4" />
+      <LineId Id="14" Count="0" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

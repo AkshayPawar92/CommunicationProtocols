@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FN_MemoryClear" Id="{52b7d7fc-56ef-4523-95ac-807eab11f276}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION FN_MemoryClear
+VAR_INPUT
+	destAddr: PVOID;
+	Len: UDINT;
+END_VAR
+VAR
+	NULL: BYTE:= 0;
+	i: ULINT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+	FOR i := 0 TO (Len-1) BY 1 DO
+		MEMCPY(destAddr:= destAddr + i, srcAddr:= ADR(NULL), n:= 1);				
+	END_FOR	
+	
+	]]></ST>
+    </Implementation>
+    <LineIds Name="FN_MemoryClear">
+      <LineId Id="20" Count="0" />
+      <LineId Id="39" Count="1" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="42" Count="0" />
+      <LineId Id="33" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,13 +1,41 @@
-<?xml version="1.0" encoding="utf-8"?>
-<TcPlcObject Version="1.1.0.1">
-  <POU Name="MAIN" Id="{90fa3c98-d7c6-42f6-8b49-07c136b3c71a}">
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="MAIN" Id="{90fa3c98-d7c6-42f6-8b49-07c136b3c71a}" SpecialFunc="None">
     <Declaration><![CDATA[PROGRAM MAIN
 VAR
+	fbTCP_IP_Server: FB_TCP_IP_Server;
+	fbTCP_IP_ServerClientConnection: FB_TCP_IP_ServerClientConnection;
 END_VAR
-]]>
-    </Declaration>
+VAR CONSTANT
+END_VAR
+
+]]></Declaration>
     <Implementation>
-      <ST><![CDATA[]]></ST>
+      <ST><![CDATA[
+fbTCP_IP_Server(
+	sSrvNetId:= , 
+	sLocalHost:= , 
+	nLocalPort:= , 
+	bListen:= , 
+	bClose:= , 
+	bReset:= , 
+	TIMEOUT:= );
+
+fbTCP_IP_ServerClientConnection();
+
+
+
+
+
+]]></ST>
     </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="6" Count="0" />
+      <LineId Id="95" Count="6" />
+      <LineId Id="9" Count="2" />
+      <LineId Id="60" Count="0" />
+      <LineId Id="16" Count="3" />
+      <LineId Id="2" Count="0" />
+    </LineIds>
   </POU>
 </TcPlcObject>

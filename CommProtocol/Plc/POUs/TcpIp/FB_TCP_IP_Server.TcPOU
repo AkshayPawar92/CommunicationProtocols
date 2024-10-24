@@ -1,0 +1,133 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FB_TCP_IP_Server" Id="{be982363-2abf-4dfb-a71a-3248e6e907f5}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TCP_IP_Server
+VAR_INPUT
+	sSrvNetId: T_AmsNetId;
+	sLocalHost: T_IPv4Addr := '192.168.1.7';
+	nLocalPort: UDINT := 23;
+	bListen: BOOL;
+	bAccept: BOOL := TRUE;
+	bClose: BOOL;
+	bCloseAll: BOOL;
+	bReset: BOOL;
+	aSendDataBuffer: ARRAY[0..MAX_CLIENT] OF ARRAY[0..MAX_BUFFER] OF BYTE;		
+	TIMEOUT: TIME := T#5S;	
+END_VAR
+VAR_OUTPUT
+	aReceiveDataBuffer: ARRAY[0..MAX_CLIENT] OF ARRAY[0..MAX_BUFFER] OF BYTE;
+	
+END_VAR
+VAR
+	fbTCP_IP_SocketListen: FB_TCP_IP_SocketListen;
+	fbSocketCloseAll: FB_SocketCloseAll;
+	fbTCP_IP_ServerAccept: ARRAY[0..MAX_CLIENT] OF FB_TCP_IP_ServerAccept;
+	bSend: ARRAY[0..MAX_CLIENT] OF BOOL;
+	bClose2: ARRAY[0..MAX_CLIENT] OF BOOL;
+	ftSocketListeningStopped: F_TRIG;
+	i: INT;
+	selection: INT := 0;
+END_VAR
+VAR CONSTANT
+	MAX_BUFFER	: UINT:= 1023;
+	MAX_CLIENT: UINT:= 2;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+	ftSocketListeningStopped(CLK:= fbTCP_IP_SocketListen.bListening, Q=> );
+
+	fbTCP_IP_SocketListen(
+		sSrvNetId			:= sSrvNetId, 
+		sLocalHost			:= sLocalHost, 
+		nLocalPort			:= nLocalPort, 
+		bListen				:= bListen, 
+		bClose				:= bClose, 
+		bReset				:= bReset, 
+		TIMEOUT				:= TIMEOUT, 
+		bDone				=> , 
+		bBusy				=> , 
+		bListening			=> , 
+		hListener			=> , 
+		bError				=> , 
+		nErrID				=> , 
+		sStatus				=> );	
+		
+	FOR i := 0 TO MAX_CLIENT BY 1 DO
+		fbTCP_IP_ServerAccept[i](
+			sSrvNetId			:= sSrvNetId, 
+			bAccept				:= bAccept, 
+			bListenReady		:= fbTCP_IP_SocketListen.bListening, 
+			hListener			:= fbTCP_IP_SocketListen.hListener, 
+			bSend				:= bSend[i], 
+			bClose				:= bClose2[i] OR ftSocketListeningStopped.Q, 
+			bReset				:= bReset, 
+			aSendDataBuffer		:= aSendDataBuffer[i], 
+			TIMEOUT				:= TIMEOUT, 
+			bAccepted			=> , 
+			bError				=> , 
+			nErrID				=> , 
+			sStatus				=> , 
+			aReceiveDataBuffer	=> aReceiveDataBuffer[i]);			
+	END_FOR
+
+	selection;
+	fbTCP_IP_ServerAccept[0].bAccepted;
+	fbTCP_IP_ServerAccept[1].bAccepted;
+	fbTCP_IP_ServerAccept[2].bAccepted;
+	fbTCP_IP_ServerAccept[selection].bError;
+	fbTCP_IP_ServerAccept[selection].nErrID;
+	fbTCP_IP_ServerAccept[selection].sStatus;
+	aReceiveDataBuffer[0][0];
+	aReceiveDataBuffer[0][1];
+	aReceiveDataBuffer[0][2];
+	aReceiveDataBuffer[0][3];
+
+	aReceiveDataBuffer[1][0];
+	aReceiveDataBuffer[1][1];
+	aReceiveDataBuffer[1][2];
+	aReceiveDataBuffer[1][3];
+
+	aReceiveDataBuffer[2][0];
+	aReceiveDataBuffer[2][1];
+	aReceiveDataBuffer[2][2];
+	aReceiveDataBuffer[2][3];
+	
+		
+	fbSocketCloseAll(
+		sSrvNetId			:= sSrvNetId, 
+		bExecute			:= bCloseAll, 
+		tTimeout			:= T#5S, 
+		bBusy				=> , 
+		bError				=> , 
+		nErrId				=> );
+
+
+
+
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="FB_TCP_IP_Server">
+      <LineId Id="90" Count="1" />
+      <LineId Id="10" Count="0" />
+      <LineId Id="20" Count="13" />
+      <LineId Id="11" Count="0" />
+      <LineId Id="89" Count="0" />
+      <LineId Id="94" Count="0" />
+      <LineId Id="98" Count="13" />
+      <LineId Id="95" Count="1" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="52" Count="0" />
+      <LineId Id="76" Count="0" />
+      <LineId Id="128" Count="1" />
+      <LineId Id="78" Count="3" />
+      <LineId Id="84" Count="2" />
+      <LineId Id="118" Count="9" />
+      <LineId Id="87" Count="0" />
+      <LineId Id="77" Count="0" />
+      <LineId Id="42" Count="5" />
+      <LineId Id="13" Count="5" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

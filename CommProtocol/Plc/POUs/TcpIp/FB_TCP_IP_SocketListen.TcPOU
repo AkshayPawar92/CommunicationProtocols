@@ -1,0 +1,467 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FB_TCP_IP_SocketListen" Id="{0d9b34a4-f752-47ec-b73a-b47920219828}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TCP_IP_SocketListen
+VAR_INPUT
+	sSrvNetId: T_AmsNetId;
+	sLocalHost: T_IPv4Addr;
+	nLocalPort: UDINT;
+	bListen: BOOL;		//	1: Listen | 0: Stop listening, remove all existing connections
+	bClose: BOOL;
+	bReset: BOOL;
+	TIMEOUT: TIME := T#5s;
+	
+END_VAR
+VAR_OUTPUT
+	bDone: BOOL;
+	bBusy: BOOL;
+	bListening: BOOL;
+	hListener: Tc2_TcpIp.T_HSOCKET;
+	bError: BOOL;
+	nErrID: UDINT;
+	sStatus: STRING(255);
+	
+END_VAR
+VAR
+	step: (eInit, eInitToListen, eListen, eWait, eClose, eClose2, eError);
+	fbSocketListen: FB_SocketListen;
+	fbSocketClose: FB_SocketClose;
+	
+	tonCaseStuck: TON;
+	rtClose: R_TRIG;
+	M_Close: BOOL;
+	tonCloseCmdOverride: TON;
+	rtReset: R_TRIG;
+	M_Reset: BOOL;
+	tonResetCmdOverride: TON;
+	tonAutoErrorReset: TON;
+	_doneSetFromCloseCase: BOOL;
+	_doneSetFromListenCase: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[	
+	rtClose(CLK:= bClose, Q=> );
+	IF rtClose.Q THEN
+		M_Close			:=	TRUE;
+	END_IF
+	tonCloseCmdOverride(IN:= M_Close, PT:= TIMEOUT + T#1S, Q=> , ET=> );
+	IF tonCloseCmdOverride.Q THEN
+		step		:=	eClose;
+		M_Close		:=	FALSE;			
+	END_IF
+
+	rtReset(CLK:= bReset, Q=> );
+	IF rtReset.Q THEN
+		M_Reset			:=	TRUE;
+	END_IF
+	
+	IF bDone AND tonResetCmdOverride.Q THEN
+		step		:=	eInit;
+		M_Reset		:=	FALSE;
+		bDone		:=	FALSE;	
+	END_IF
+	tonResetCmdOverride(IN:= M_Reset, PT:= TIMEOUT + T#1S, Q=> , ET=> );
+	IF tonResetCmdOverride.Q THEN
+		bDone		:=	TRUE;		
+	END_IF
+	
+	CASE step OF
+	eInit:
+		IF M_Close AND (NOT bReset) THEN
+			step		:=	eClose;
+			M_Close		:=	FALSE;
+			bBusy		:=	TRUE;
+			bDone		:=	FALSE;
+		ELSIF bListen AND (NOT bReset) AND (NOT bClose) THEN
+			step		:=	eInitToListen;		
+			fbSocketListen(bExecute:= FALSE);
+			fbSocketClose(bExecute:=	FALSE);
+			bListening	:=	FALSE;
+			bBusy		:=	TRUE;
+			bDone		:=	FALSE;
+		END_IF
+		M_Reset			:=	FALSE;
+		tonAutoErrorReset(IN:= FALSE);
+		tonCaseStuck(IN:= FALSE);
+		
+		IF _doneSetFromCloseCase AND bDone AND NOT bClose THEN
+			_doneSetFromCloseCase	:=	FALSE;
+			bDone					:=	FALSE;
+		END_IF
+		
+	eInitToListen:
+		tonCaseStuck(IN:= TRUE, PT:= TIMEOUT + T#2S, Q=> , ET=> );
+
+		fbSocketListen(
+			sSrvNetId		:= sSrvNetId, 
+			sLocalHost		:= sLocalHost, 
+			nLocalPort		:= nLocalPort, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> , 
+			hListener		=> hListener);		
+		
+		IF fbSocketListen.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketListen.nErrId;
+			sStatus		:=	'FB Error: fbSocketListen | case no. eInitToListen';			
+		ELSIF (fbSocketListen.bBusy) THEN
+			step		:=	eListen;
+			tonCaseStuck(IN:= FALSE);	
+		END_IF
+		
+		IF tonCaseStuck.Q THEN
+			IF M_Close THEN				
+				step		:=	eClose;
+				M_Close		:=	FALSE;
+				tonCaseStuck(IN:= FALSE);
+			ELSE
+				step		:=	eError;
+				nErrID		:=	1;
+				sStatus		:=	'Custom ErrID | Case stuck: eInitToListen';
+				tonCaseStuck(IN:= FALSE);	
+			END_IF
+		END_IF
+		
+	eListen:
+		tonCaseStuck(IN:= TRUE, PT:= TIMEOUT + T#2S, Q=> , ET=> );
+
+		fbSocketListen(
+			sSrvNetId		:= sSrvNetId, 
+			sLocalHost		:= sLocalHost, 
+			nLocalPort		:= nLocalPort, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> , 
+			hListener		=> hListener);		
+		
+		IF fbSocketListen.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketListen.nErrId;
+			sStatus		:=	'FB Error: fbSocketListen | case no. eListen';			
+		ELSIF (NOT fbSocketListen.bBusy) THEN
+			fbSocketListen(bExecute:= FALSE);
+			IF M_Close THEN
+				step		:=	eClose;
+				M_Close		:=	FALSE;
+				tonCaseStuck(IN:= FALSE);
+			ELSE
+				step		:=	eWait;
+				bListening	:=	TRUE;
+				bBusy		:=	FALSE;
+				bDone		:=	TRUE;
+				_doneSetFromListenCase	:=	TRUE;
+				tonCaseStuck(IN:= FALSE);
+				bError		:=	FALSE;
+				nErrID		:=	0;
+				sStatus		:=	'';
+			END_IF
+		END_IF	
+
+		IF tonCaseStuck.Q THEN
+			IF M_Close THEN				
+				step		:=	eClose;
+				M_Close		:=	FALSE;
+				tonCaseStuck(IN:= FALSE);
+			ELSE
+				step		:=	eError;
+				nErrID		:=	1;
+				sStatus		:=	'Custom ErrID | Case stuck: eListen';
+				tonCaseStuck(IN:= FALSE);	
+			END_IF				
+		END_IF
+		
+	eWait:
+		IF NOT bListen THEN
+			step		:=	eClose;
+			bDone		:=	FALSE;
+			_doneSetFromListenCase	:=	FALSE;
+		ELSIF M_Close THEN
+			step		:=	eClose;	
+			M_Close		:=	FALSE;
+			bDone		:=	FALSE;
+			_doneSetFromListenCase	:=	FALSE;
+		ELSIF M_Reset THEN
+			step		:=	eInit;
+			bListening	:=	FALSE;
+			M_Reset		:=	FALSE;
+			bDone		:=	FALSE;
+			_doneSetFromListenCase	:=	FALSE;	
+		END_IF
+
+		
+	eClose:
+		tonCaseStuck(IN:= TRUE, PT:= TIMEOUT + T#2S, Q=> , ET=> );
+
+		bListening	:=	FALSE;
+		M_Close		:=	FALSE;
+		
+		fbSocketClose(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketListen.hListener, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> );
+			
+		IF fbSocketClose.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketClose.nErrId;
+			sStatus		:=	'FB Error: fbSocketClose | case no. eClose';			
+		ELSIF (NOT fbSocketClose.bBusy) THEN
+			step		:=	eClose2;
+			tonCaseStuck(IN:= FALSE);
+		END_IF	
+		
+		IF tonCaseStuck.Q THEN
+			step		:=	eError;
+			nErrID		:=	1;
+			sStatus		:=	'Custom ErrID | Case stuck: eClose';
+			tonCaseStuck(IN:= FALSE);	
+		END_IF
+	
+	eClose2:
+		tonCaseStuck(IN:= TRUE, PT:= TIMEOUT + T#2S, Q=> , ET=> );
+
+		fbSocketClose(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketListen.hListener, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> );
+			
+		IF fbSocketClose.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketClose.nErrId;
+			sStatus		:=	'FB Error: fbSocketClose | case no. eClose';			
+		ELSIF (NOT fbSocketClose.bBusy) THEN
+			fbSocketClose(bExecute:= FALSE);
+			step		:=	eInit;
+			bBusy		:=	FALSE;
+			bDone		:=	TRUE;
+			_doneSetFromCloseCase	:=	TRUE;
+			tonCaseStuck(IN:= FALSE);
+		END_IF	
+		
+		IF tonCaseStuck.Q THEN
+			step		:=	eError;
+			nErrID		:=	1;
+			sStatus		:=	'Custom ErrID | Case stuck: eClose';
+			tonCaseStuck(IN:= FALSE);	
+		END_IF		
+			
+	eError:
+		bError		:=	TRUE;
+		bBusy		:=	FALSE;
+		bDone		:=	FALSE;
+		
+		bListening	:=	FALSE;
+		fbSocketListen(bExecute:= FALSE);
+		fbSocketClose(bExecute:= FALSE);
+		tonCaseStuck(IN:= FALSE);
+		
+		tonAutoErrorReset(IN:= bListen, PT:= T#5S, Q=> , ET=> );
+		IF tonAutoErrorReset.Q THEN
+			step	:=	eInit;
+			tonAutoErrorReset(IN:= FALSE);
+			
+		END_IF
+		
+		IF M_Close THEN
+			step	:=	eClose;
+			M_Close	:=	FALSE;
+			tonAutoErrorReset(IN:= FALSE);
+			bError		:=	FALSE;
+			nErrID		:=	0;
+			sStatus		:=	'';
+		ELSIF M_Reset THEN
+			step	:=	eInit;
+			M_Reset	:=	FALSE;
+			tonAutoErrorReset(IN:= FALSE);
+			bError		:=	FALSE;
+			nErrID		:=	0;
+			sStatus		:=	'';	
+		END_IF
+		
+	END_CASE
+	
+
+	
+	
+	//	Calling
+	fbSocketListen();
+	fbSocketClose();
+	tonCaseStuck();
+	tonAutoErrorReset();
+	
+	
+	
+	]]></ST>
+    </Implementation>
+    <LineIds Name="FB_TCP_IP_SocketListen">
+      <LineId Id="10" Count="0" />
+      <LineId Id="129" Count="0" />
+      <LineId Id="131" Count="2" />
+      <LineId Id="128" Count="0" />
+      <LineId Id="168" Count="0" />
+      <LineId Id="179" Count="0" />
+      <LineId Id="182" Count="0" />
+      <LineId Id="180" Count="0" />
+      <LineId Id="183" Count="0" />
+      <LineId Id="185" Count="3" />
+      <LineId Id="349" Count="1" />
+      <LineId Id="352" Count="0" />
+      <LineId Id="354" Count="1" />
+      <LineId Id="353" Count="0" />
+      <LineId Id="189" Count="1" />
+      <LineId Id="347" Count="0" />
+      <LineId Id="193" Count="0" />
+      <LineId Id="181" Count="0" />
+      <LineId Id="11" Count="0" />
+      <LineId Id="39" Count="0" />
+      <LineId Id="135" Count="2" />
+      <LineId Id="306" Count="0" />
+      <LineId Id="345" Count="0" />
+      <LineId Id="44" Count="1" />
+      <LineId Id="60" Count="0" />
+      <LineId Id="216" Count="0" />
+      <LineId Id="305" Count="0" />
+      <LineId Id="328" Count="0" />
+      <LineId Id="344" Count="0" />
+      <LineId Id="46" Count="0" />
+      <LineId Id="205" Count="0" />
+      <LineId Id="292" Count="0" />
+      <LineId Id="319" Count="0" />
+      <LineId Id="356" Count="0" />
+      <LineId Id="295" Count="0" />
+      <LineId Id="320" Count="0" />
+      <LineId Id="322" Count="0" />
+      <LineId Id="321" Count="0" />
+      <LineId Id="315" Count="0" />
+      <LineId Id="47" Count="0" />
+      <LineId Id="358" Count="1" />
+      <LineId Id="51" Count="8" />
+      <LineId Id="50" Count="0" />
+      <LineId Id="49" Count="0" />
+      <LineId Id="66" Count="1" />
+      <LineId Id="75" Count="0" />
+      <LineId Id="78" Count="0" />
+      <LineId Id="72" Count="1" />
+      <LineId Id="360" Count="0" />
+      <LineId Id="68" Count="0" />
+      <LineId Id="114" Count="0" />
+      <LineId Id="113" Count="0" />
+      <LineId Id="141" Count="1" />
+      <LineId Id="150" Count="0" />
+      <LineId Id="152" Count="0" />
+      <LineId Id="144" Count="0" />
+      <LineId Id="146" Count="3" />
+      <LineId Id="143" Count="0" />
+      <LineId Id="116" Count="1" />
+      <LineId Id="74" Count="0" />
+      <LineId Id="362" Count="1" />
+      <LineId Id="80" Count="15" />
+      <LineId Id="279" Count="0" />
+      <LineId Id="163" Count="0" />
+      <LineId Id="165" Count="0" />
+      <LineId Id="167" Count="0" />
+      <LineId Id="365" Count="0" />
+      <LineId Id="166" Count="0" />
+      <LineId Id="96" Count="1" />
+      <LineId Id="330" Count="0" />
+      <LineId Id="329" Count="0" />
+      <LineId Id="331" Count="0" />
+      <LineId Id="364" Count="0" />
+      <LineId Id="374" Count="1" />
+      <LineId Id="373" Count="0" />
+      <LineId Id="164" Count="0" />
+      <LineId Id="79" Count="0" />
+      <LineId Id="361" Count="0" />
+      <LineId Id="122" Count="0" />
+      <LineId Id="154" Count="8" />
+      <LineId Id="153" Count="0" />
+      <LineId Id="69" Count="0" />
+      <LineId Id="127" Count="0" />
+      <LineId Id="98" Count="1" />
+      <LineId Id="103" Count="0" />
+      <LineId Id="338" Count="1" />
+      <LineId Id="169" Count="2" />
+      <LineId Id="340" Count="1" />
+      <LineId Id="199" Count="1" />
+      <LineId Id="372" Count="0" />
+      <LineId Id="201" Count="0" />
+      <LineId Id="342" Count="1" />
+      <LineId Id="104" Count="0" />
+      <LineId Id="336" Count="0" />
+      <LineId Id="334" Count="0" />
+      <LineId Id="105" Count="0" />
+      <LineId Id="366" Count="1" />
+      <LineId Id="107" Count="0" />
+      <LineId Id="213" Count="0" />
+      <LineId Id="253" Count="0" />
+      <LineId Id="206" Count="6" />
+      <LineId Id="173" Count="0" />
+      <LineId Id="224" Count="0" />
+      <LineId Id="228" Count="4" />
+      <LineId Id="237" Count="0" />
+      <LineId Id="368" Count="0" />
+      <LineId Id="239" Count="0" />
+      <LineId Id="254" Count="0" />
+      <LineId Id="242" Count="0" />
+      <LineId Id="248" Count="3" />
+      <LineId Id="227" Count="0" />
+      <LineId Id="225" Count="0" />
+      <LineId Id="214" Count="0" />
+      <LineId Id="369" Count="1" />
+      <LineId Id="256" Count="13" />
+      <LineId Id="283" Count="0" />
+      <LineId Id="270" Count="0" />
+      <LineId Id="307" Count="1" />
+      <LineId Id="317" Count="0" />
+      <LineId Id="371" Count="0" />
+      <LineId Id="271" Count="1" />
+      <LineId Id="274" Count="4" />
+      <LineId Id="255" Count="0" />
+      <LineId Id="215" Count="0" />
+      <LineId Id="70" Count="0" />
+      <LineId Id="309" Count="0" />
+      <LineId Id="312" Count="2" />
+      <LineId Id="76" Count="0" />
+      <LineId Id="280" Count="2" />
+      <LineId Id="357" Count="0" />
+      <LineId Id="284" Count="1" />
+      <LineId Id="287" Count="0" />
+      <LineId Id="291" Count="0" />
+      <LineId Id="299" Count="0" />
+      <LineId Id="288" Count="1" />
+      <LineId Id="172" Count="0" />
+      <LineId Id="175" Count="0" />
+      <LineId Id="177" Count="0" />
+      <LineId Id="293" Count="0" />
+      <LineId Id="296" Count="2" />
+      <LineId Id="202" Count="2" />
+      <LineId Id="294" Count="0" />
+      <LineId Id="303" Count="1" />
+      <LineId Id="302" Count="0" />
+      <LineId Id="176" Count="0" />
+      <LineId Id="174" Count="0" />
+      <LineId Id="40" Count="0" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="111" Count="0" />
+      <LineId Id="109" Count="1" />
+      <LineId Id="61" Count="3" />
+      <LineId Id="13" Count="0" />
+      <LineId Id="290" Count="0" />
+      <LineId Id="14" Count="1" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

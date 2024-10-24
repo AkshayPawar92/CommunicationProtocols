@@ -1,0 +1,382 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.13">
+  <POU Name="FB_TCP_IP_ServerAccept" Id="{4b0e0506-87dd-4ff1-980f-9e1f09a2edf7}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TCP_IP_ServerAccept
+VAR_INPUT
+	sSrvNetId: T_AmsNetId;
+	bAccept: BOOL;
+	bListenReady: BOOL;
+	hListener: Tc2_TcpIp.T_HSOCKET;
+	bSend: BOOL;
+	bClose: BOOL;
+	bReset: BOOL;
+	aSendDataBuffer: ARRAY[0..MAX_BUFFER] OF BYTE;	
+	TIMEOUT: TIME := T#5S;
+	
+END_VAR
+VAR_OUTPUT
+	//bDone: BOOL;
+	//bBusy: BOOL;
+	bAccepted: BOOL;
+	bError: BOOL;
+	nErrID: UDINT;
+	sStatus: STRING(255);
+	aReceiveDataBuffer: ARRAY[0..MAX_BUFFER] OF BYTE;
+END_VAR
+VAR
+	step: (eInit, ePreAccept, eAccept, eManageConnection, eWait, ePreSend, eSend, eClose, eClose2, eCloseAll, eError);
+	fbSocketAccept: FB_SocketAccept;
+	fbSocketClose: FB_SocketClose;
+	fbSocketSend: FB_SocketSend;
+	fbSocketReceive: FB_SocketReceive;
+	aDataBuffer: ARRAY[0..MAX_BUFFER] OF BYTE;
+	nRecBytes: UDINT;
+
+	rtSend: R_TRIG;
+	rtClose: R_TRIG;
+	tonReceivePollFreq: TON;
+	rtReset: R_TRIG;
+	tonError: TON;
+	
+	M_Close: BOOL;
+	tonCloseCmdOverride: TON;
+	M_Reset: BOOL;
+	tonResetCmdOverride: TON;
+	//tonCaseStuck: TON;
+	tonAutoErrorReset: TON;
+	nBytesTransferred: UDINT;
+END_VAR
+VAR CONSTANT
+	MAX_BUFFER	: UINT:= 1023;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[	rtClose(CLK:= bClose, Q=> );
+	IF rtClose.Q THEN
+		M_Close			:=	TRUE;
+	END_IF
+	tonCloseCmdOverride(IN:= M_Close, PT:= TIMEOUT + T#1S, Q=> , ET=> );
+	IF tonCloseCmdOverride.Q THEN
+		step		:=	eClose;
+		M_Close		:=	FALSE;			
+	END_IF
+
+	rtReset(CLK:= bReset, Q=> );
+	IF rtReset.Q THEN
+		M_Reset			:=	TRUE;
+	END_IF
+	
+//	IF bDone AND tonResetCmdOverride.Q THEN
+//		step		:=	eInit;
+//		M_Reset		:=	FALSE;
+//		bDone		:=	FALSE;	
+//	END_IF
+	tonResetCmdOverride(IN:= M_Reset, PT:= TIMEOUT + T#1S, Q=> , ET=> );
+	IF tonResetCmdOverride.Q THEN
+		//bDone		:=	TRUE;	
+		step		:=	eInit;
+		M_Reset		:=	FALSE;	
+	END_IF
+
+	CASE step OF
+	eInit:
+		IF bAccept AND (bListenReady AND hListener.handle <> 0) AND (NOT bReset) AND (NOT bClose) THEN
+			step		:=	ePreAccept;
+			bAccepted	:=	FALSE;
+		ELSIF M_Close AND (NOT bReset) THEN
+			step		:=	eClose;
+			M_Close		:=	FALSE;
+		END_IF
+		fbSocketAccept(bExecute:= FALSE);
+		fbSocketClose(bExecute:= FALSE);
+		fbSocketSend(bExecute:= FALSE);
+		M_Reset			:=	FALSE;
+		
+	ePreAccept:
+		fbSocketAccept(
+			sSrvNetId		:= sSrvNetId, 
+			hListener		:= hListener, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bAccepted		=> , 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> , 
+			hSocket			=> );
+	
+		IF fbSocketAccept.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketAccept.nErrId;
+			sStatus		:=	'FB Error: fbSocketAccept | case no. ePreAccept';
+		ELSE			
+		//ELSIF (fbSocketAccept.bBusy) THEN	- Note: Observed that this FB does not trigger Busy bit
+			step		:=	eAccept;
+		END_IF
+
+	eAccept:
+		fbSocketAccept(
+			sSrvNetId		:= sSrvNetId, 
+			hListener		:= hListener, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bAccepted		=> , 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> , 
+			hSocket			=> );
+			
+		IF fbSocketAccept.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketAccept.nErrId;
+			sStatus		:=	'FB Error: fbSocketAccept | case no. eAccept';
+		ELSIF (NOT fbSocketAccept.bBusy) THEN
+			IF fbSocketAccept.hSocket.handle <> 0 THEN
+				step			:=	eManageConnection;
+				bAccepted		:=	fbSocketAccept.bAccepted;
+			ELSE
+				step			:=	eManageConnection;
+			END_IF	
+			bError		:=	FALSE;
+			nErrID		:=	0;
+			sStatus		:=	'';
+		END_IF	
+
+	eManageConnection:
+		IF NOT bAccepted THEN
+			step		:=	eInit;
+		ELSE
+			step		:=	eWait;
+		END_IF
+	
+	eWait:	
+		IF rtSend.Q THEN
+			step		:=	ePreSend;
+		END_IF
+		IF M_Close THEN
+			M_Close		:=	FALSE;
+			step		:=	eClose;
+		END_IF
+	
+	ePreSend:
+		fbSocketSend(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketAccept.hSocket, 
+			cbLen			:= SIZEOF(aSendDataBuffer), 
+			pSrc			:= ADR(aSendDataBuffer), 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> );	
+	
+		IF fbSocketSend.bError THEN
+			step			:=	eError;
+			nErrID			:=	fbSocketSend.nErrId;
+			sStatus			:=	'FB_SocketSend | error case: ePreSend';
+		ELSIF (fbSocketSend.bBusy) THEN
+			fbSocketSend(bExecute	:=	FALSE);
+			step			:=	eSend;		
+		END_IF			
+		
+	eSend:
+		fbSocketSend(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketAccept.hSocket, 
+			cbLen			:= SIZEOF(aSendDataBuffer), 
+			pSrc			:= ADR(aSendDataBuffer), 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> );	
+	
+		IF fbSocketSend.bError THEN
+			step			:=	eError;
+			nErrID			:=	fbSocketSend.nErrId;
+			sStatus			:=	'FB_SocketSend | error case: eSend';
+		ELSIF (NOT fbSocketSend.bBusy) THEN
+			fbSocketSend(bExecute	:=	FALSE);
+			step			:=	eWait;		
+		END_IF	
+		
+	eClose:		
+		bAccepted			:=	FALSE;
+		
+		fbSocketClose(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketAccept.hSocket, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> );
+			
+		IF fbSocketClose.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketClose.nErrId;
+			sStatus		:=	'FB Error: fbSocketClose | case no. eClose';			
+		ELSIF (NOT fbSocketClose.bBusy) THEN
+			step		:=	eClose2;
+		END_IF	
+	
+	eClose2:
+
+		fbSocketClose(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketAccept.hListener, 
+			bExecute		:= TRUE, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> );
+			
+		IF fbSocketClose.bError THEN
+			step		:=	eError;
+			nErrID		:=	fbSocketClose.nErrId;
+			sStatus		:=	'FB Error: fbSocketClose | case no. eClose';			
+		ELSIF (NOT fbSocketClose.bBusy) THEN
+			fbSocketClose(bExecute:= FALSE);
+			step		:=	eInit;
+
+		END_IF	
+		
+	eError:
+		bError		:=	TRUE;
+		//bBusy		:=	FALSE;
+		//bDone		:=	FALSE;
+		
+		bAccepted	:=	FALSE;
+		fbSocketAccept(bExecute:= FALSE);
+		fbSocketClose(bExecute:= FALSE);
+		fbSocketSend(bExecute:= FALSE);
+		
+		tonAutoErrorReset(IN:= bAccept, PT:= T#5S, Q=> , ET=> );
+		IF tonAutoErrorReset.Q THEN
+			step	:=	eInit;
+			tonAutoErrorReset(IN:= FALSE);			
+		END_IF
+		
+		IF M_Close THEN
+			step	:=	eClose;
+			M_Close	:=	FALSE;
+			tonAutoErrorReset(IN:= FALSE);
+			bError		:=	FALSE;
+			nErrID		:=	0;
+			sStatus		:=	'';
+		ELSIF M_Reset THEN
+			step	:=	eInit;
+			M_Reset	:=	FALSE;
+			tonAutoErrorReset(IN:= FALSE);
+			bError		:=	FALSE;
+			nErrID		:=	0;
+			sStatus		:=	'';	
+		END_IF
+		
+	END_CASE
+	
+	tonReceivePollFreq(IN:= (NOT tonReceivePollFreq.Q) AND 
+							bAccepted AND 
+							(NOT bError) AND 
+							(NOT fbSocketReceive.bBusy), 
+						PT:= T#1S, Q=> , ET=> );
+	
+		fbSocketReceive(
+			sSrvNetId		:= sSrvNetId, 
+			hSocket			:= fbSocketAccept.hSocket, 
+			cbLen			:= SIZEOF(aDataBuffer), 
+			pDest			:= ADR(aDataBuffer), 
+			bExecute		:= tonReceivePollFreq.Q, 
+			tTimeout		:= TIMEOUT, 
+			bBusy			=> , 
+			bError			=> , 
+			nErrId			=> , 
+			nRecBytes		=> nRecBytes);	
+		
+		IF fbSocketReceive.nRecBytes > 0 THEN			
+			FN_MemoryClear(destAddr:= ADR(aReceiveDataBuffer), Len:= SIZEOF(aReceiveDataBuffer));
+		
+			nBytesTransferred	:=	MEMCPY(destAddr:= ADR(aReceiveDataBuffer), srcAddr:= ADR(aDataBuffer), n:= nRecBytes);
+			IF (nRecBytes <> nBytesTransferred) AND step = eWait THEN
+				bError		:=	TRUE;
+				nErrID		:=	1;
+				sStatus		:=	'Bytes transfered is nt equal to received bytes | Custom Error ID';
+				step		:=	eError;
+			END_IF
+		END_IF
+	
+	]]></ST>
+    </Implementation>
+    <LineIds Name="FB_TCP_IP_ServerAccept">
+      <LineId Id="45" Count="22" />
+      <LineId Id="297" Count="1" />
+      <LineId Id="68" Count="0" />
+      <LineId Id="73" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="77" Count="0" />
+      <LineId Id="79" Count="0" />
+      <LineId Id="85" Count="0" />
+      <LineId Id="336" Count="0" />
+      <LineId Id="299" Count="2" />
+      <LineId Id="86" Count="0" />
+      <LineId Id="80" Count="0" />
+      <LineId Id="256" Count="1" />
+      <LineId Id="98" Count="0" />
+      <LineId Id="303" Count="0" />
+      <LineId Id="81" Count="0" />
+      <LineId Id="88" Count="8" />
+      <LineId Id="87" Count="0" />
+      <LineId Id="82" Count="0" />
+      <LineId Id="100" Count="3" />
+      <LineId Id="111" Count="0" />
+      <LineId Id="104" Count="1" />
+      <LineId Id="99" Count="0" />
+      <LineId Id="108" Count="1" />
+      <LineId Id="114" Count="8" />
+      <LineId Id="113" Count="0" />
+      <LineId Id="123" Count="0" />
+      <LineId Id="125" Count="4" />
+      <LineId Id="132" Count="4" />
+      <LineId Id="131" Count="0" />
+      <LineId Id="338" Count="1" />
+      <LineId Id="337" Count="0" />
+      <LineId Id="124" Count="0" />
+      <LineId Id="137" Count="5" />
+      <LineId Id="107" Count="0" />
+      <LineId Id="144" Count="0" />
+      <LineId Id="146" Count="0" />
+      <LineId Id="148" Count="1" />
+      <LineId Id="145" Count="0" />
+      <LineId Id="340" Count="0" />
+      <LineId Id="342" Count="0" />
+      <LineId Id="344" Count="0" />
+      <LineId Id="343" Count="0" />
+      <LineId Id="341" Count="0" />
+      <LineId Id="152" Count="0" />
+      <LineId Id="154" Count="17" />
+      <LineId Id="150" Count="0" />
+      <LineId Id="172" Count="1" />
+      <LineId Id="176" Count="17" />
+      <LineId Id="175" Count="0" />
+      <LineId Id="174" Count="0" />
+      <LineId Id="194" Count="0" />
+      <LineId Id="334" Count="1" />
+      <LineId Id="200" Count="14" />
+      <LineId Id="216" Count="0" />
+      <LineId Id="224" Count="1" />
+      <LineId Id="227" Count="16" />
+      <LineId Id="247" Count="1" />
+      <LineId Id="294" Count="0" />
+      <LineId Id="260" Count="7" />
+      <LineId Id="295" Count="0" />
+      <LineId Id="269" Count="4" />
+      <LineId Id="277" Count="15" />
+      <LineId Id="255" Count="0" />
+      <LineId Id="293" Count="0" />
+      <LineId Id="78" Count="0" />
+      <LineId Id="74" Count="0" />
+      <LineId Id="304" Count="4" />
+      <LineId Id="75" Count="0" />
+      <LineId Id="309" Count="23" />
+      <LineId Id="76" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>
